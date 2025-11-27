@@ -83,6 +83,14 @@
           }
         },
         {
+          "client_id": "600905167527-n9ahoqvjj5p1rp0lg5dsrcv4dc1kbdsp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.pixeldiet",
+            "certificate_hash": "cb8e9b27ee4a1f0b99ad81fd61269a709b73e874"
+          }
+        },
+        {
           "client_id": "600905167527-ojo15hiv1vg7gbh23cq9u1e13g8f3n2v.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
