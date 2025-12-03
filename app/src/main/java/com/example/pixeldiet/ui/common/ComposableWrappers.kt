@@ -9,7 +9,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.pixeldiet.model.CalendarDecoratorData
 import com.example.pixeldiet.model.DayStatus
 import com.github.mikephil.charting.charts.BarChart
-import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.components.LimitLine
+//import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.BarData
 import com.github.mikephil.charting.data.BarDataSet
 import com.github.mikephil.charting.data.BarEntry
@@ -26,7 +27,8 @@ import com.prolificinteractive.materialcalendarview.spans.DotSpan
 @Composable
 fun WrappedMaterialCalendar(
     modifier: Modifier = Modifier,
-    decoratorData: List<CalendarDecoratorData>
+    decoratorData: List<CalendarDecoratorData>,
+    onMonthChanged: (year: Int, month: Int) -> Unit = { _, _ -> }  // ⭐ 추가
 ) {
     AndroidView(
         modifier = modifier,
@@ -40,6 +42,12 @@ fun WrappedMaterialCalendar(
                 selectionMode = MaterialCalendarView.SELECTION_MODE_NONE
                 // ✅ today 로 이동 (프로퍼티가 아니라 메서드 호출)
                 setCurrentDate(CalendarDay.today())
+
+                // ⭐ 월 변경 리스너 붙이기
+                setOnMonthChangedListener { _, date ->
+                    // CalendarDay.year, month 그대로 넘겨줌 (month는 1~12 기준으로 사용)
+                    onMonthChanged(date.year, date.month)
+                }
             }
         },
         update = { view ->
@@ -63,7 +71,7 @@ fun WrappedMaterialCalendar(
                 .toSet()
 
             if (successDays.isNotEmpty()) {
-                view.addDecorator(StatusDecorator(successDays, Color.BLUE))
+                view.addDecorator(StatusDecorator(successDays, Color.GREEN))
             }
             if (warningDays.isNotEmpty()) {
                 view.addDecorator(
@@ -86,41 +94,56 @@ fun WrappedMaterialCalendar(
 @Composable
 fun WrappedBarChart(
     modifier: Modifier = Modifier,
-    chartData: List<Entry>
+    chartData: List<Entry>,       // x = 일, y = 사용시간(분)
+    goalLine: Float? = null       // 🔹 목표 상한선 (분 단위), 없으면 null
 ) {
     AndroidView(
         modifier = modifier,
         factory = { context ->
             BarChart(context).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                xAxis.apply {
-                    position = XAxis.XAxisPosition.BOTTOM
-                    setDrawGridLines(true)
-                    granularity = 1f      // 하루 간격
-                }
-                axisRight.isEnabled = false
                 description.isEnabled = false
-                setDrawValueAboveBar(false)
+                axisRight.isEnabled = false
+                axisLeft.axisMinimum = 0f
+                xAxis.granularity = 1f
+                xAxis.setDrawGridLines(false)
+                axisLeft.setDrawGridLines(true)
+                legend.isEnabled = false
             }
         },
-        update = { view ->
-            if (chartData.isEmpty()) {
-                view.clear()
-                view.invalidate()
-                return@AndroidView
+        update = { barChart ->
+            // 1) BarEntry로 변환
+            val entries = chartData.map { e ->
+                BarEntry(e.x, e.y)
             }
 
-            val barEntries = chartData.map { BarEntry(it.x, it.y) }
-
-            val dataSet = BarDataSet(barEntries, "사용시간(분)").apply {
-                color = Color.BLUE
-                setDrawValues(false)
+            val dataSet = BarDataSet(entries, "사용 시간(분)").apply {
+                valueTextSize = 10f
             }
-            view.data = BarData(dataSet)
-            view.invalidate()
+
+            barChart.data = BarData(dataSet).apply {
+                barWidth = 0.6f
+            }
+
+            // 2) 기존 LimitLine 제거
+            val leftAxis = barChart.axisLeft
+            leftAxis.removeAllLimitLines()
+
+            // 3) 목표 상한선 추가 (있을 때만)
+            if (goalLine != null) {
+                val limit = LimitLine(goalLine, "목표").apply {
+                    lineWidth = 2f
+                    enableDashedLine(10f, 10f, 0f)
+                    textSize = 10f
+                }
+                leftAxis.addLimitLine(limit)
+            }
+
+            // 4) Y축 최대값을 목표 선까지는 보이게 약간 여유 줌
+            val maxUsage = (entries.maxOfOrNull { it.y } ?: 0f)
+            val maxValue = listOf(maxUsage, goalLine ?: 0f).maxOrNull() ?: 0f
+            leftAxis.axisMaximum = (maxValue * 1.1f).coerceAtLeast(10f)
+
+            barChart.invalidate()
         }
     )
 }

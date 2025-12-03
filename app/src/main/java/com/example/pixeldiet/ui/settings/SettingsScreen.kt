@@ -1,9 +1,16 @@
 package com.example.pixeldiet.ui.settings
 
+import android.app.Activity
+import android.content.Intent
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
@@ -12,28 +19,59 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.example.pixeldiet.R
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 // ⭐️ LocalContext import는 이제 필요 없습니다.
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.pixeldiet.backup.LoginActivity
+
 import com.example.pixeldiet.model.NotificationSettings
 import com.example.pixeldiet.viewmodel.SharedViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 
 @Composable
 fun SettingsScreen(viewModel: SharedViewModel = viewModel()) {
 
+    val context = LocalContext.current
+    val activity = context as? Activity
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                val idToken = account?.idToken
+                if (idToken != null) {
+                    viewModel.onGoogleLoginSuccess(idToken)
+                    Toast.makeText(context, "구글 로그인 완료", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: ApiException) {
+                Log.e("GoogleLogin", "Login failed: ${e.statusCode}")
+            }
+        }
+    }
+
+    val isGoogleUser by viewModel.isGoogleUser.collectAsState()
+
     var showIndividualSettings by remember { mutableStateOf(false) }
     var showTotalSettings by remember { mutableStateOf(false) }
     val settings by viewModel.notificationSettings.observeAsState()
-    // ⭐️ [삭제] val context = LocalContext.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item { Text("알림 설정", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+
+        // 알람 버튼들
         item {
             Card(elevation = CardDefaults.cardElevation(2.dp)) {
                 Column {
@@ -51,6 +89,39 @@ fun SettingsScreen(viewModel: SharedViewModel = viewModel()) {
                         onClick = { showTotalSettings = true }
                     )
                 }
+            }
+        }
+
+        // 구글 로그인/로그아웃 버튼
+        item {
+            Card(elevation = CardDefaults.cardElevation(2.dp)) {
+                SettingsItem(
+                    title = if (isGoogleUser) "로그아웃" else "계정 연동하기",
+                    icon = Icons.Default.AccountCircle,
+                    iconTint = Color(0xFF4285F4),
+                    onClick = {
+                        if (activity == null) return@SettingsItem
+
+                        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                            .requestIdToken(context.getString(R.string.default_web_client_id))
+                            .requestEmail()
+                            .build()
+                        val googleSignInClient = GoogleSignIn.getClient(activity, gso)
+
+                        if (isGoogleUser) {
+                            viewModel.logout()
+                            googleSignInClient.signOut().addOnCompleteListener {
+                                val intent = Intent(activity, LoginActivity::class.java)
+                                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                activity.startActivity(intent)
+                            }
+                        } else {
+                            googleSignInClient.revokeAccess().addOnCompleteListener {
+                                googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                            }
+                        }
+                    }
+                )
             }
         }
     }

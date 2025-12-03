@@ -41,15 +41,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ⭐️ 1. [순서 변경] "사용 시간 권한"을 묻기 전에, "알림 채널"부터 만든다!
-        //    (이래야 시스템이 스위치를 안 막습니다)
+        // ⭐️ 1. 알림 채널 생성
         NotificationHelper.createNotificationChannel(this)
 
-        // ⭐️ 2. [순서 변경] "알림 권한"을 먼저 물어봅니다.
+        // ⭐️ 2. 알림 권한 확인
         checkNotificationPermission()
 
-        // ⭐️ 3. "사용 시간 권한"은 그 다음에 확인합니다.
+        // ⭐️ 3. 사용 시간 권한 확인
         checkUsageStatsPermission()
+
+        // ✅ Repository는 ViewModel을 모름 → 여기서 attachAuthListener만 등록
+        com.example.pixeldiet.repository.UsageRepository.attachAuthListener(this)
 
         setContent {
             PixelDietTheme {

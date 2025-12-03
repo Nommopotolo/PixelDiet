@@ -12,17 +12,18 @@ import java.util.Locale
  * - 알림 설정 (켜기/끄기, 반복 시간)
  * - 마지막 알림 보낸 시간/날짜 기록
  */
-class NotificationPrefs(context: Context) {
+class NotificationPrefs(context: Context, val uid: String) {
 
+
+    // ✅ UID별 Prefs 파일로 분리
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("PixelDietPrefs", Context.MODE_PRIVATE)
+        context.getSharedPreferences("PixelDietPrefs_$uid", Context.MODE_PRIVATE)
 
     // --- 오늘 날짜 (YYYY-MM-DD) ---
     private val todayString: String
         get() = SimpleDateFormat("yyyy-MM-dd", Locale.KOREAN).format(Date())
 
     // --- 알림 설정 저장/로드 ---
-
     fun saveNotificationSettings(settings: NotificationSettings) {
         prefs.edit().apply {
             putBoolean("ind_50", settings.individualApp50)
@@ -44,42 +45,22 @@ class NotificationPrefs(context: Context) {
             total50 = prefs.getBoolean("total_50", true),
             total70 = prefs.getBoolean("total_70", true),
             total100 = prefs.getBoolean("total_100", true),
-            repeatIntervalMinutes = prefs.getInt("repeat_interval", 5) // 기본값 5분
+            repeatIntervalMinutes = prefs.getInt("repeat_interval", 5)
         )
     }
 
-    // --- "하루 한 번" 알림 날짜 기록 ---
-
-    /**
-     * @param type "ind_50", "ind_70", "total_50", "total_70"
-     * @return 오늘 이 타입의 알림을 보낸 적이 있으면 true
-     */
     fun hasSentToday(type: String): Boolean {
-        // "ind_50"라는 키에 "2025-11-17" (오늘 날짜)이 저장되어 있는지 확인
         return prefs.getString(type, null) == todayString
     }
 
-    /**
-     * @param type "ind_50", "ind_70", "total_50", "total_70"
-     */
     fun recordSentToday(type: String) {
-        // "ind_50" 키에 오늘 날짜("2025-11-17")를 저장
         prefs.edit().putString(type, todayString).apply()
     }
 
-    // --- "반복 알림" 시간 기록 ---
-
-    /**
-     * @param type "ind_100", "total_100"
-     * @return 마지막 100% 알림 보낸 시간 (타임스탬프)
-     */
     fun getLastRepeatSentTime(type: String): Long {
-        return prefs.getLong(type, 0L) // 0L = 보낸 적 없음
+        return prefs.getLong(type, 0L)
     }
 
-    /**
-     * @param type "ind_100", "total_100"
-     */
     fun recordRepeatSentTime(type: String) {
         prefs.edit().putLong(type, System.currentTimeMillis()).apply()
     }

@@ -75,30 +75,6 @@
       },
       "oauth_client": [
         {
-          "client_id": "600905167527-1na72dc0oto1hf0as7f9qfpsgqclml1p.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.pixeldiet",
-            "certificate_hash": "8d9ebdad78d0cbb14bea281d5f6fb33c217a9536"
-          }
-        },
-        {
-          "client_id": "600905167527-n9ahoqvjj5p1rp0lg5dsrcv4dc1kbdsp.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.pixeldiet",
-            "certificate_hash": "cb8e9b27ee4a1f0b99ad81fd61269a709b73e874"
-          }
-        },
-        {
-          "client_id": "600905167527-ojo15hiv1vg7gbh23cq9u1e13g8f3n2v.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.pixeldiet",
-            "certificate_hash": "f3935aa5a2374ec2f9f300d6d08989399dcb77d7"
-          }
-        },
-        {
           "client_id": "600905167527-i5sdno1jsf110p6a60laef48v9qorbkh.apps.googleusercontent.com",
           "client_type": 3
         }

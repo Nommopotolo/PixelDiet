@@ -1,10 +1,13 @@
 package com.example.pixeldiet.ui.navigation
 
+import com.example.pixeldiet.ui.main.AppSelectionScreen
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -14,10 +17,11 @@ import androidx.navigation.compose.rememberNavController
 import com.example.pixeldiet.ui.calendar.CalendarScreen
 import com.example.pixeldiet.ui.main.MainScreen
 import com.example.pixeldiet.ui.settings.SettingsScreen
+import com.example.pixeldiet.viewmodel.SharedViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppNavigation() {
+fun AppNavigation(sharedViewModel: SharedViewModel = viewModel()) {
     val navController = rememberNavController()
 
     val items = listOf(
@@ -25,11 +29,18 @@ fun AppNavigation() {
         BottomNavItem.Calendar,
         BottomNavItem.Settings,
     )
+    val welcomeText by sharedViewModel.userName.collectAsState()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = "PixelDiet") },
+                title = {
+                    // Pixel 대신 로그인 상태 문구만 표시
+                    Text(
+                        text = welcomeText,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.primary
@@ -64,9 +75,30 @@ fun AppNavigation() {
             startDestination = BottomNavItem.Main.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(BottomNavItem.Main.route) { MainScreen() }
-            composable(BottomNavItem.Calendar.route) { CalendarScreen() }
-            composable(BottomNavItem.Settings.route) { SettingsScreen() }
+            composable(BottomNavItem.Main.route) {
+                MainScreen(
+                    viewModel = sharedViewModel,          // ⭐ 같은 ViewModel 사용
+                    onAppSelectionClick = {
+                        navController.navigate("app_selection")
+                    }
+                )
+            }
+            composable(BottomNavItem.Calendar.route) {
+                CalendarScreen(
+                    viewModel = sharedViewModel
+                )
+            }
+            composable(BottomNavItem.Settings.route) {
+                SettingsScreen()
+            }
+
+            // 👇 앱 선택 화면 라우트 추가 (바텀탭에는 안 보이는 서브 화면)
+            composable("app_selection") {
+                AppSelectionScreen(
+                    viewModel = sharedViewModel,
+                    onDone = { navController.popBackStack() }
+                )
+            }
         }
     }
 }
