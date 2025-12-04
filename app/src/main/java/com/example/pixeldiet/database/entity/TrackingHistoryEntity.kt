@@ -3,6 +3,7 @@ package com.example.pixeldiet.database.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.firebase.firestore.Exclude  // ✅ Firestore 직렬화 제외
 
 @Entity(
     tableName = "tracking_history",
@@ -11,7 +12,10 @@ import androidx.room.PrimaryKey
     ]
 )
 data class TrackingHistoryEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey(autoGenerate = true)
+    @get:Exclude   // ✅ Firestore 직렬화에서 제외
+    val id: Long = 0,
+
     val uid: String,                 // 사용자 UID (Firebase UID 또는 "anonymous")
     val effectiveDate: String,       // "YYYY-MM-DD" 형식
     val trackedPackages: List<String> // 추적 앱 목록 (Converters 필요)

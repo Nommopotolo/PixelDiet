@@ -31,7 +31,7 @@ import com.example.pixeldiet.database.entity.TrackingHistoryEntity
 import kotlinx.coroutines.withContext
 import android.content.SharedPreferences
 import com.example.pixeldiet.database.entity.GoalHistoryEntity
-
+import com.example.pixeldiet.backup.BackupManager
 class SharedViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = UsageRepository
@@ -105,15 +105,26 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
             val today = todayString()
             val dao = AppDatabase.getInstance(getApplication()).historyDao()
 
-            dao.insertTrackingHistory(
-                TrackingHistoryEntity(
-                    uid = uid,
-                    effectiveDate = today,
-                    trackedPackages = newSet.toList()
-                )
+            val entity = TrackingHistoryEntity(
+                uid = uid,
+                effectiveDate = today,
+                trackedPackages = newSet.toList()
             )
 
-            refreshData()
+            // ✅ Room 저장
+            dao.insertTrackingHistory(entity)
+
+            // ✅ Firestore 업데이트: 빈 값일 때는 무시
+            if (newSet.isNotEmpty()) {
+                BackupManager().backupTrackingHistory(uid, entity)
+            } else {
+                Log.d("SharedViewModel", "빈 trackedPackages → Firestore 백업 건너뜀")
+            }
+
+            // ✅ Firestore 업데이트 성공 시에만 데이터 로드
+            if (newSet.isNotEmpty()) {
+                repository.loadRealData(getApplication())
+            }
         }
     }
 
@@ -142,7 +153,6 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
         _overallGoalMinutes.value = minutes
 
         if (uid == "anonymous") {
-            // ✅ 게스트는 Prefs에만 저장
             getGoalPrefs(uid).edit().apply {
                 if (minutes == null) {
                     remove("overall_goal_minutes")
@@ -151,24 +161,58 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }.apply()
         } else {
-            // ✅ 계정 UID일 때는 DB에 저장
             viewModelScope.launch(Dispatchers.IO) {
                 val dao = AppDatabase.getInstance(getApplication()).historyDao()
-                dao.insertGoalHistory(
-                    com.example.pixeldiet.database.entity.GoalHistoryEntity(
-                        uid = uid,
-                        effectiveDate = todayString(),
-                        packageName = null,          // ✅ 전체 목표이므로 null 지정
-                        goalMinutes = minutes ?: 0
-                    )
+
+                val entity = GoalHistoryEntity(
+                    uid = uid,
+                    effectiveDate = todayString(),
+                    packageName = null,          // 전체 목표이므로 null
+                    goalMinutes = minutes ?: 0
                 )
-                // 저장 후 다시 로드
+
+                // ✅ Room 저장
+                dao.insertGoalHistory(entity)
+
+                // ✅ Firestore 백업 추가
+                BackupManager().backupGoalHistory(uid, entity)
+
                 loadOverallGoal()
             }
         }
     }
 
+    fun backupTodayUsage() = viewModelScope.launch(Dispatchers.IO) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
+        val dao = AppDatabase.getInstance(getApplication()).historyDao()
 
+        val today = todayString()
+
+        // 🔹 현재 앱 사용 데이터 가져오기
+        val usages = appUsageList.value ?: emptyList()
+
+        // 🔹 추적 앱 목록 가져오기
+        val tracked = trackedPackages.value ?: emptySet()
+
+        // 🔹 오늘 날짜의 실제 사용 시간 Map 생성
+        val appUsages: Map<String, Int> = usages
+            .filter { tracked.isEmpty() || it.packageName in tracked }   // ✅ 추적 앱만 반영
+            .associate { it.packageName to it.currentUsage }             // ✅ packageName → 사용시간(분)
+
+        val entity = com.example.pixeldiet.database.entity.DailyUsageEntity(
+            uid = uid,
+            date = today,
+            appUsages = appUsages       // ✅ 실제 사용 시간 반영
+        )
+
+        // ✅ Room 저장
+        dao.upsertDailyUsage(entity)
+
+        // ✅ Firestore 백업
+        if (uid != "anonymous") {
+            BackupManager().backupDailyUsage(uid, entity)
+        }
+    }
 
     // ----------------------- Firebase Auth -----------------------
 
@@ -186,13 +230,11 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
         auth.addAuthStateListener { firebaseAuth ->
             val uid = firebaseAuth.currentUser?.uid ?: "anonymous"
 
-            // ✅ UI 상태도 갱신
             _userName.value = getUserName()
             isGoogleUser.value = isGoogleLogin()
 
             viewModelScope.launch(Dispatchers.IO) {
                 val dao = AppDatabase.getInstance(getApplication()).historyDao()
-
                 val tracked = if (uid != "anonymous") {
                     dao.getLatestTrackingHistory(uid)?.trackedPackages?.toSet() ?: emptySet()
                 } else {
@@ -200,12 +242,10 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _trackedPackages.postValue(tracked)
 
-                // ✅ 목표 시간도 DB 기반으로 불러오기
                 loadOverallGoal()
 
-                if (uid != "anonymous") {
-                    repository.loadRealData(getApplication())
-                }
+                // ✅ AuthListener는 상태만 갱신, 데이터 로드는 하지 않음
+                Log.d("SharedViewModel", "AuthListener 상태 갱신 완료 (uid=$uid)")
             }
         }
     }
@@ -221,7 +261,34 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 auth.signInWithCredential(credential).await()
+
+                val uid = auth.currentUser?.uid ?: return@launch
+                Log.d("SharedViewModel", "구글 로그인 성공: $uid")
+
+                val context = getApplication<Application>().applicationContext
+                val backupManager = BackupManager()
+
+                // 🔹 복원 시작 알림
+                repository.setRestoring(true)
+
+                // Firestore → Room 복원 (순차 실행 보장)
+                val dailyRestored = backupManager.restoreDailyRecordsToRoom(context)
+                val goalRestored = backupManager.restoreGoalHistoryToRoom(context)
+                val trackingRestored = backupManager.restoreTrackingHistoryToRoom(context)
+
+                Log.d("SharedViewModel", "복원 결과: daily=$dailyRestored, goal=$goalRestored, tracking=$trackingRestored")
+
+                // 🔹 복원 완료 알림
+                repository.setRestoring(false)
+
+                // 🔹 복원 suspend 함수들이 모두 끝난 뒤에만 UID별 단 한 번 로드 실행
+                withContext(Dispatchers.IO) {
+                    repository.loadOnceAfterRestore(getApplication())
+                    Log.d("SharedViewModel", "복원 후 단일 로드 실행 완료 (uid=$uid)")
+                }
+
             } catch (e: Exception) {
+                repository.setRestoring(false)
                 Log.e("GoogleLogin", "Firebase sign in failed: $e")
             }
         }
@@ -522,32 +589,45 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
 
     // ----------------------- 데이터 로딩/설정 저장 -----------------------
 
+    // SharedViewModel.kt - refreshData() 수정된 코드
+// SharedViewModel.kt - refreshData() 최종 수정 코드
     fun refreshData() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        viewModelScope.launch {
+            val uid = FirebaseAuth.getInstance().currentUser?.uid
             if (!uid.isNullOrEmpty()) {
-                // ✅ 계정 UID일 때만 데이터 로드
-                repository.loadRealData(getApplication())
+                // ✅ IO에서 Room 데이터 로드
+                withContext(Dispatchers.IO) {
+                    repository.loadRealData(getApplication())
+                }
             } else {
-                // ✅ 게스트 상태에서는 데이터 로드하지 않음
-                // LiveData는 그대로 유지 → 게스트 데이터가 덮어쓰지 않음
+                // ✅ 게스트 상태에서는 Prefs 기반 데이터만 사용
             }
         }
     }
+
 
     fun setGoalTimes(goals: Map<String, Int>) = viewModelScope.launch(Dispatchers.IO) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
         val dao = AppDatabase.getInstance(getApplication()).historyDao()
 
         goals.forEach { (pkg, minutes) ->
-            dao.insertGoalHistory(
-                GoalHistoryEntity(
-                    uid = uid,
-                    effectiveDate = todayString(),
-                    packageName = pkg,       // ✅ 앱별 목표는 packageName 지정
-                    goalMinutes = minutes
-                )
+            // ✅ packageName이 null/빈 문자열이면 "overall"로 대체
+            val safePackageName = if (!pkg.isNullOrBlank()) pkg else "overall"
+
+            val entity = GoalHistoryEntity(
+                uid = uid,
+                effectiveDate = todayString(),
+                packageName = safePackageName,
+                goalMinutes = minutes
             )
+
+            // ✅ Room 저장
+            dao.insertGoalHistory(entity)
+
+            // ✅ Firestore 백업 추가
+            if (uid != "anonymous") {
+                BackupManager().backupGoalHistory(uid, entity)
+            }
         }
 
         // 저장 후 다시 데이터 로드
@@ -567,4 +647,5 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.KOREAN)
         return sdf.format(Date())
     }
+
 }

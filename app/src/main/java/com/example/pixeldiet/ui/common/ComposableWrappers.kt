@@ -10,7 +10,6 @@ import com.example.pixeldiet.model.CalendarDecoratorData
 import com.example.pixeldiet.model.DayStatus
 import com.github.mikephil.charting.charts.BarChart
 import com.github.mikephil.charting.components.LimitLine
-//import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.BarData
 import com.github.mikephil.charting.data.BarDataSet
 import com.github.mikephil.charting.data.BarEntry
@@ -28,7 +27,7 @@ import com.prolificinteractive.materialcalendarview.spans.DotSpan
 fun WrappedMaterialCalendar(
     modifier: Modifier = Modifier,
     decoratorData: List<CalendarDecoratorData>,
-    onMonthChanged: (year: Int, month: Int) -> Unit = { _, _ -> }  // ⭐ 추가
+    onMonthChanged: (year: Int, month: Int) -> Unit = { _, _ -> }
 ) {
     AndroidView(
         modifier = modifier,
@@ -40,12 +39,11 @@ fun WrappedMaterialCalendar(
                 )
                 topbarVisible = true
                 selectionMode = MaterialCalendarView.SELECTION_MODE_NONE
-                // ✅ today 로 이동 (프로퍼티가 아니라 메서드 호출)
+                // ✅ 오늘 날짜로 이동
                 setCurrentDate(CalendarDay.today())
 
-                // ⭐ 월 변경 리스너 붙이기
+                // ⭐ 월 변경 리스너
                 setOnMonthChangedListener { _, date ->
-                    // CalendarDay.year, month 그대로 넘겨줌 (month는 1~12 기준으로 사용)
                     onMonthChanged(date.year, date.month)
                 }
             }
@@ -54,32 +52,16 @@ fun WrappedMaterialCalendar(
             // 기존 데코레이터 제거
             view.removeDecorators()
 
-            // 상태별로 날짜를 분리
-            val successDays = decoratorData
-                .filter { it.status == DayStatus.SUCCESS }
-                .map { it.date }
-                .toSet()
-
-            val warningDays = decoratorData
-                .filter { it.status == DayStatus.WARNING }
-                .map { it.date }
-                .toSet()
-
-            val failDays = decoratorData
-                .filter { it.status == DayStatus.FAIL }
-                .map { it.date }
-                .toSet()
+            // 상태별 날짜 분리
+            val successDays = decoratorData.filter { it.status == DayStatus.SUCCESS }.map { it.date }.toSet()
+            val warningDays = decoratorData.filter { it.status == DayStatus.WARNING }.map { it.date }.toSet()
+            val failDays = decoratorData.filter { it.status == DayStatus.FAIL }.map { it.date }.toSet()
 
             if (successDays.isNotEmpty()) {
                 view.addDecorator(StatusDecorator(successDays, Color.GREEN))
             }
             if (warningDays.isNotEmpty()) {
-                view.addDecorator(
-                    StatusDecorator(
-                        warningDays,
-                        Color.parseColor("#FFC107") // 노랑
-                    )
-                )
+                view.addDecorator(StatusDecorator(warningDays, Color.parseColor("#FFC107")))
             }
             if (failDays.isNotEmpty()) {
                 view.addDecorator(StatusDecorator(failDays, Color.RED))
@@ -111,10 +93,8 @@ fun WrappedBarChart(
             }
         },
         update = { barChart ->
-            // 1) BarEntry로 변환
-            val entries = chartData.map { e ->
-                BarEntry(e.x, e.y)
-            }
+            // 1) BarEntry 변환
+            val entries = chartData.map { e -> BarEntry(e.x, e.y) }
 
             val dataSet = BarDataSet(entries, "사용 시간(분)").apply {
                 valueTextSize = 10f
@@ -128,7 +108,7 @@ fun WrappedBarChart(
             val leftAxis = barChart.axisLeft
             leftAxis.removeAllLimitLines()
 
-            // 3) 목표 상한선 추가 (있을 때만)
+            // 3) 목표 상한선 추가
             if (goalLine != null) {
                 val limit = LimitLine(goalLine, "목표").apply {
                     lineWidth = 2f
@@ -138,7 +118,7 @@ fun WrappedBarChart(
                 leftAxis.addLimitLine(limit)
             }
 
-            // 4) Y축 최대값을 목표 선까지는 보이게 약간 여유 줌
+            // 4) Y축 최대값 설정
             val maxUsage = (entries.maxOfOrNull { it.y } ?: 0f)
             val maxValue = listOf(maxUsage, goalLine ?: 0f).maxOrNull() ?: 0f
             leftAxis.axisMaximum = (maxValue * 1.1f).coerceAtLeast(10f)
@@ -156,10 +136,8 @@ private class StatusDecorator(
     private val color: Int
 ) : DayViewDecorator {
 
-    // 여기서 day가 칠해야 할 날짜인지 확인
     override fun shouldDecorate(day: CalendarDay): Boolean = dates.contains(day)
 
-    // 실제 꾸미기 (날짜 정보는 이미 위에서 필터링됨)
     override fun decorate(view: DayViewFacade) {
         view.addSpan(DotSpan(10f, color))
     }

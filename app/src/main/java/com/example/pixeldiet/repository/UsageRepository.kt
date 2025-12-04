@@ -20,9 +20,17 @@ import java.util.*
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-
+import com.example.pixeldiet.backup.BackupManager
+import android.util.Log
+import kotlinx.coroutines.sync.withLock
 object UsageRepository {
 
+    private val excludedPackages = setOf(
+        "com.android.settings",
+        "com.google.android.gms",
+        "com.google.android.gsf",
+        "com.android.systemui"
+    )
     private var prefs: NotificationPrefs? = null
 
     private val _appUsageList = MutableLiveData<List<AppUsage>>()
@@ -36,8 +44,34 @@ object UsageRepository {
 
     private val currentGoals = mutableMapOf<String, Int>()
 
+    // 🔹 추가: 복원 상태/단일 로드 보장용 상태
+    private val loadMutex = kotlinx.coroutines.sync.Mutex()
+    private var hasLoadedAfterRestoreForUid: String? = null
+    private val _isRestoring = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isRestoring: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRestoring
+
     init {
         _appUsageList.postValue(emptyList())
+    }
+
+    // 🔹 추가: 복원 상태 토글
+    fun setRestoring(restoring: Boolean) {
+        _isRestoring.value = restoring
+        Log.d("UsageRepository", "setRestoring=$restoring")
+    }
+
+    // 🔹 추가: 복원 직후 UID별로 단 한 번만 로드
+    suspend fun loadOnceAfterRestore(context: Context) {
+        val uid = getUid(context)
+        loadMutex.withLock {
+            if (hasLoadedAfterRestoreForUid == uid) {
+                Log.d("UsageRepository", "복원 후 이미 로드됨, 건너뜀 (uid=$uid)")
+                return@withLock   // ✅ 람다에서 빠져나갈 때는 return@withLock
+            }
+            Log.d("UsageRepository", "복원 후 첫 로드 실행 (uid=$uid)")
+            loadRealData(context)   // ✅ suspend 함수 호출 가능
+            hasLoadedAfterRestoreForUid = uid
+        }
     }
 
     // ---------------- 알림 설정 ----------------
@@ -66,17 +100,19 @@ object UsageRepository {
         val today = todayString()
         val dao = AppDatabase.getInstance(context).historyDao()
 
-        // DB에 GoalHistory 기록
+// DB에 GoalHistory 기록 + Firestore 백업
         withContext(Dispatchers.IO) {
             goals.forEach { (pkg, minutes) ->
-                dao.insertGoalHistory(
-                    GoalHistoryEntity(
-                        uid = uid,
-                        effectiveDate = today,
-                        packageName = pkg,
-                        goalMinutes = minutes
-                    )
+                val entity = GoalHistoryEntity(
+                    uid = uid,
+                    effectiveDate = today,
+                    packageName = pkg,
+                    goalMinutes = minutes
                 )
+                dao.insertGoalHistory(entity)
+
+                // ✅ 신규 추가: Firestore에도 백업
+                BackupManager().backupGoalHistory(uid, entity)
             }
         }
 
@@ -113,9 +149,7 @@ object UsageRepository {
         val myPackage = context.packageName
         val preciseUsageMap = calculatePreciseUsage(context, startTime, endTime)
 
-        val todayUsageMap: Map<String, Int> =
-            preciseUsageMap.filterKeys { it != myPackage && it != launcherPackage }
-                .filterValues { it > 0 }
+        val todayUsageMap = preciseUsageMap.filterValues { it > 0 }
 
         calendar.add(Calendar.DAY_OF_MONTH, -30)
         val thirtyDaysAgo = calendar.timeInMillis
@@ -145,30 +179,46 @@ object UsageRepository {
 
         val dao = AppDatabase.getInstance(context).historyDao()
 
-        // DB에 오늘 DailyUsage 기록
+// DB에 오늘 DailyUsage 기록 + Firestore 백업
         withContext(Dispatchers.IO) {
-            dao.upsertDailyUsage(
-                DailyUsageEntity(
-                    uid = uid,
-                    date = todayKey,
-                    appUsages = todayUsageMap
-                )
+            val entity = DailyUsageEntity(
+                uid = uid,
+                date = todayKey,
+                appUsages = todayUsageMap
             )
+            dao.upsertDailyUsage(entity)
+
+            // ✅ 디버깅 로그 추가
+            Log.d("UsageRepository", "Room insertDailyUsage: uid=$uid, date=${entity.date}, appUsages=${entity.appUsages}")
+
+            // ✅ Firestore에도 백업
+            BackupManager().backupDailyUsage(uid, entity)
         }
 
-        // DB에서 최근 30일 조회
+
+        // DB에서 모든 데이터 조회 (복원된 과거 기록 포함)
         val newDailyList = withContext(Dispatchers.IO) {
-            dao.getDailyUsages(uid, sdf.format(Date(thirtyDaysAgo)), todayKey)
+            // ✅ 조회 범위를 오늘 이후까지 포함시켜 복원된 과거 기록도 가져오도록 수정
+            dao.getDailyUsages(uid, "0000-01-01", "9999-12-31")
                 .map { DailyUsage(it.date, it.appUsages) }
         }
-        _dailyUsageList.postValue(newDailyList)
 
+// ✅ 디버깅 로그 추가: Room에서 가져온 데이터 확인
+        Log.d("UsageRepository", "Loaded DailyUsage count=${newDailyList.size}, data=$newDailyList")
+
+        _dailyUsageList.postValue(newDailyList)
         val streakMap = calculateStreaks(newDailyList, currentGoals)
 
         // DB에서 오늘 기준 추적앱 조회
 // DB에서 최근 기록 기준 추적앱 조회
         val trackedPackages = withContext(Dispatchers.IO) {
-            dao.getLatestTrackingHistory(uid)?.trackedPackages?.toSet() ?: emptySet()
+            val latest = dao.getLatestTrackingHistory(uid)?.trackedPackages?.toSet()
+            if (latest.isNullOrEmpty()) {
+                Log.d("UsageRepository", "Firestore 업데이트 건너뜀: trackedPackages 비어 있음")
+                emptySet()
+            } else {
+                latest
+            }
         }
 
         val packageNames = mutableSetOf<String>()
@@ -179,7 +229,7 @@ object UsageRepository {
 
         val todayStr = todayString()
 
-        val newAppUsageList = packageNames.map { pkg ->
+        val newAppUsageList = packageNames.map { pkg: String ->
             val todayUsage = todayUsageMap[pkg] ?: 0
 
             // ✅ DB에서 앱별 목표 조회
@@ -324,6 +374,25 @@ object UsageRepository {
             }
         }
 
+        // ✅ 디버깅 로그
+        Log.d("UsageRepository", "Precise usage raw: $appUsageMap")
+
+        // ✅ 보정: 이벤트가 거의 없을 경우 queryUsageStats로 대체/병합
+        if (appUsageMap.isEmpty()) {
+            val dailyStats = usageStatsManager.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                startTime,
+                endTime
+            )
+            for (stat in dailyStats) {
+                val usageInMinutes = (stat.totalTimeInForeground / (1000 * 60)).toInt()
+                if (usageInMinutes > 0) {
+                    appUsageMap[stat.packageName] = (appUsageMap[stat.packageName] ?: 0L) + stat.totalTimeInForeground
+                }
+            }
+            Log.d("UsageRepository", "Fallback usageStats: $appUsageMap")
+        }
+
         return appUsageMap.mapValues { (_, millis) -> (millis / (1000 * 60)).toInt() }
     }
 
@@ -342,21 +411,19 @@ object UsageRepository {
     // ✅ UID 변경 이벤트 감지
     fun attachAuthListener(context: Context) {
         FirebaseAuth.getInstance().addAuthStateListener { auth ->
-            val uid = auth.currentUser?.uid ?: "anonymous"
+            val user = auth.currentUser
+            val uid = if (user == null || user.isAnonymous) "anonymous" else user.uid
 
             prefs = NotificationPrefs(context.applicationContext, uid)
             _notificationSettings.postValue(prefs!!.loadNotificationSettings())
 
-            _appUsageList.postValue(emptyList())
-            _dailyUsageList.postValue(emptyList())
-            currentGoals.clear()
+            // 🔹 UID 변경 시 “복원 후 단일 로드” 마커 초기화
+            hasLoadedAfterRestoreForUid = null
 
-            if (uid != "anonymous") {
-                CoroutineScope(Dispatchers.IO).launch {
-                    loadRealData(context)
-                }
-            }
+            // ✅ LiveData 초기화/로드 없음 → 복원 데이터 유지
+            Log.d("UsageRepository", "AuthListener: UID 갱신만 수행, 마커 초기화 (uid=$uid)")
         }
+
     }
 
 }

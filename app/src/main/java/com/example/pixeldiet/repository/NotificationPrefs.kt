@@ -38,15 +38,22 @@ class NotificationPrefs(context: Context, val uid: String) {
     }
 
     fun loadNotificationSettings(): NotificationSettings {
-        return NotificationSettings(
-            individualApp50 = prefs.getBoolean("ind_50", true),
-            individualApp70 = prefs.getBoolean("ind_70", true),
-            individualApp100 = prefs.getBoolean("ind_100", true),
-            total50 = prefs.getBoolean("total_50", true),
-            total70 = prefs.getBoolean("total_70", true),
-            total100 = prefs.getBoolean("total_100", true),
-            repeatIntervalMinutes = prefs.getInt("repeat_interval", 5)
-        )
+        return try {
+            NotificationSettings(
+                individualApp50 = prefs.getBoolean("ind_50", true),
+                individualApp70 = prefs.getBoolean("ind_70", true),
+                individualApp100 = prefs.getBoolean("ind_100", true),
+                total50 = prefs.getBoolean("total_50", true),
+                total70 = prefs.getBoolean("total_70", true),
+                total100 = prefs.getBoolean("total_100", true),
+                repeatIntervalMinutes = prefs.getInt("repeat_interval", 5)
+            )
+        } catch (e: ClassCastException) {
+            // 🚨 잘못된 타입 저장된 경우 → Prefs 초기화
+            e.printStackTrace()
+            prefs.edit().clear().apply()
+            NotificationSettings() // 기본값 반환
+        }
     }
 
     fun hasSentToday(type: String): Boolean {

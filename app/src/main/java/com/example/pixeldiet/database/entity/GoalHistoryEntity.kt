@@ -3,6 +3,7 @@ package com.example.pixeldiet.database.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.firebase.firestore.Exclude  // ✅ Firestore 직렬화 제외 어노테이션
 
 @Entity(
     tableName = "goal_history",
@@ -11,9 +12,12 @@ import androidx.room.PrimaryKey
     ]
 )
 data class GoalHistoryEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val uid: String,                // 사용자 UID (Firebase UID 또는 "anonymous")
-    val effectiveDate: String,      // "YYYY-MM-DD" 형식
-    val packageName: String?,       // null = 전체 목표, 값 있으면 특정 앱 목표
-    val goalMinutes: Int            // 목표 시간 (분 단위)
+    @PrimaryKey(autoGenerate = true)
+    @get:Exclude   // ✅ Firestore 직렬화에서 제외
+    val id: Long = 0,
+
+    val uid: String,           // 사용자 UID (Firebase UID 또는 "anonymous")
+    val effectiveDate: String, // "YYYY-MM-DD" 형식
+    val packageName: String?,  // null = 전체 목표, 값 있으면 특정 앱 목표
+    val goalMinutes: Int       // 목표 시간 (분 단위)
 )
