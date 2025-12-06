@@ -22,7 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import com.example.pixeldiet.backup.BackupManager
 import android.util.Log
-import kotlinx.coroutines.sync.withLock
+
 object UsageRepository {
 
     private val excludedPackages = setOf(
@@ -44,34 +44,8 @@ object UsageRepository {
 
     private val currentGoals = mutableMapOf<String, Int>()
 
-    // 🔹 추가: 복원 상태/단일 로드 보장용 상태
-    private val loadMutex = kotlinx.coroutines.sync.Mutex()
-    private var hasLoadedAfterRestoreForUid: String? = null
-    private val _isRestoring = kotlinx.coroutines.flow.MutableStateFlow(false)
-    val isRestoring: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRestoring
-
     init {
         _appUsageList.postValue(emptyList())
-    }
-
-    // 🔹 추가: 복원 상태 토글
-    fun setRestoring(restoring: Boolean) {
-        _isRestoring.value = restoring
-        Log.d("UsageRepository", "setRestoring=$restoring")
-    }
-
-    // 🔹 추가: 복원 직후 UID별로 단 한 번만 로드
-    suspend fun loadOnceAfterRestore(context: Context) {
-        val uid = getUid(context)
-        loadMutex.withLock {
-            if (hasLoadedAfterRestoreForUid == uid) {
-                Log.d("UsageRepository", "복원 후 이미 로드됨, 건너뜀 (uid=$uid)")
-                return@withLock   // ✅ 람다에서 빠져나갈 때는 return@withLock
-            }
-            Log.d("UsageRepository", "복원 후 첫 로드 실행 (uid=$uid)")
-            loadRealData(context)   // ✅ suspend 함수 호출 가능
-            hasLoadedAfterRestoreForUid = uid
-        }
     }
 
     // ---------------- 알림 설정 ----------------
@@ -125,6 +99,7 @@ object UsageRepository {
 
     // ---------------- 실제 데이터 로딩 ----------------
     suspend fun loadRealData(context: Context) {
+        Log.d("UsageRepository", "앱 시작됨 (loadRealData)")   // 시작 로그
         val uid = getUid(context)
         val prefs = getPrefs(context, uid)
         val usageStatsManager =
@@ -188,18 +163,14 @@ object UsageRepository {
             )
             dao.upsertDailyUsage(entity)
 
-            // ✅ 디버깅 로그 추가
-            Log.d("UsageRepository", "Room insertDailyUsage: uid=$uid, date=${entity.date}, appUsages=${entity.appUsages}")
-
-            // ✅ Firestore에도 백업
+            // ✅ 신규 추가: Firestore에도 백업
             BackupManager().backupDailyUsage(uid, entity)
         }
 
 
         // DB에서 모든 데이터 조회 (복원된 과거 기록 포함)
         val newDailyList = withContext(Dispatchers.IO) {
-            // ✅ 조회 범위를 오늘 이후까지 포함시켜 복원된 과거 기록도 가져오도록 수정
-            dao.getDailyUsages(uid, "0000-01-01", "9999-12-31")
+            dao.getDailyUsages(uid, "0000-01-01", todayKey) // 시작 날짜를 아주 과거로 설정
                 .map { DailyUsage(it.date, it.appUsages) }
         }
 
@@ -272,6 +243,7 @@ object UsageRepository {
         }.sortedBy { it.appLabel.lowercase() }
 
         _appUsageList.postValue(newAppUsageList)
+        Log.d("UsageRepository", "앱 종료됨 (loadRealData 완료)")   // 종료 로그
     }
 
     // ---------------- 보조 함수들 ----------------
@@ -410,20 +382,41 @@ object UsageRepository {
 
     // ✅ UID 변경 이벤트 감지
     fun attachAuthListener(context: Context) {
+        Log.d("UsageRepository", "앱 시작됨 (attachAuthListener)")   // 시작 로그
         FirebaseAuth.getInstance().addAuthStateListener { auth ->
+
             val user = auth.currentUser
             val uid = if (user == null || user.isAnonymous) "anonymous" else user.uid
+
+            // Prefs 마이그레이션
+            if (uid == "anonymous") {
+                val oldUid = user?.uid
+                if (!oldUid.isNullOrBlank() && oldUid != "anonymous") {
+                    val oldPrefs = NotificationPrefs(context.applicationContext, oldUid)
+                    val oldSettings = oldPrefs.loadNotificationSettings()
+                    NotificationPrefs(context.applicationContext, "anonymous").saveNotificationSettings(oldSettings)
+                }
+            }
 
             prefs = NotificationPrefs(context.applicationContext, uid)
             _notificationSettings.postValue(prefs!!.loadNotificationSettings())
 
-            // 🔹 UID 변경 시 “복원 후 단일 로드” 마커 초기화
-            hasLoadedAfterRestoreForUid = null
+            // ✅ 조건부 초기화: 데이터가 이미 있으면 덮어쓰지 않음
+            if (_dailyUsageList.value == null || _dailyUsageList.value!!.isEmpty()) {
+                _appUsageList.postValue(emptyList())
+                _dailyUsageList.postValue(emptyList())
+                currentGoals.clear()
+                Log.d("UsageRepository", "AuthListener 초기화 실행 (uid=$uid)")
+            } else {
+                Log.d("UsageRepository", "AuthListener: 기존 데이터 유지 (uid=$uid)")
+            }
 
-            // ✅ LiveData 초기화/로드 없음 → 복원 데이터 유지
-            Log.d("UsageRepository", "AuthListener: UID 갱신만 수행, 마커 초기화 (uid=$uid)")
+            if (uid != "anonymous") {
+                CoroutineScope(Dispatchers.IO).launch {
+                    loadRealData(context)
+                }
+            }
         }
-
+        Log.d("UsageRepository", "앱 종료됨 (attachAuthListener 완료)")   // 종료 로그
     }
-
 }

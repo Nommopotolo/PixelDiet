@@ -11,7 +11,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 import com.google.firebase.firestore.SetOptions
-
+import com.example.pixeldiet.repository.UsageRepository
 class BackupManager {
 
     private val firestore = FirebaseFirestore.getInstance()
@@ -25,6 +25,7 @@ class BackupManager {
 
     /** 익명 로그인 (앱 최초 실행 시) */
     suspend fun initUser() {
+        Log.d("BackupManager", "앱 시작됨 (initUser 호출)")   // 시작 로그
         try {
             if (auth.currentUser == null) {
                 auth.signInAnonymously().await()
@@ -33,6 +34,7 @@ class BackupManager {
         } catch (e: Exception) {
             Log.e("BackupManager", "익명 로그인 실패", e)
         }
+        Log.d("BackupManager", "앱 종료됨 (initUser 완료)")   // 종료 로그
     }
 
     /** Google 로그인 + 익명 데이터 자동 병합 */
@@ -185,15 +187,14 @@ class BackupManager {
 
             val dao = AppDatabase.getInstance(context).historyDao()
             for (doc in snapshot.documents) {
+                // ✅ 필드 "date"가 있으면 우선 사용, 없으면 문서 ID 사용
                 val date = doc.getString("date") ?: doc.id
                 val raw = doc.get("appUsages") as? Map<String, Any> ?: emptyMap()
                 val appUsages = raw.mapValues { (it.value as Number).toInt() }
 
-                val entity = DailyUsageEntity(uid = uid, date = date, appUsages = appUsages)
-                dao.upsertDailyUsage(entity)
-
-                // ✅ 디버깅 로그 추가
-                Log.d("BackupManager", "Room restore insert: uid=${entity.uid}, date=${entity.date}, appUsages=${entity.appUsages}")
+                dao.upsertDailyUsage(
+                    DailyUsageEntity(uid = uid, date = date, appUsages = appUsages)
+                )
             }
             Log.d("BackupManager", "dailyRecords Firestore → Room 복원 성공")
             true
@@ -242,6 +243,7 @@ class BackupManager {
     }
 
     // ✅ Firestore → Room 복원 (TrackingHistory)
+    // ✅ Firestore → Room 복원 (TrackingHistory) + UsageRepository 재로딩 추가
     suspend fun restoreTrackingHistoryToRoom(context: Context): Boolean {
         val uid = currentUserId()
         if (uid == "anonymous") return false
@@ -257,7 +259,6 @@ class BackupManager {
 
             val dao = AppDatabase.getInstance(context).historyDao()
             for (doc in snapshot.documents) {
-                // ✅ 필드 우선, 없으면 문서 ID 사용
                 val effectiveDate = doc.getString("effectiveDate") ?: doc.id
                 val trackedPackages = doc.get("trackedPackages") as? List<String> ?: emptyList()
 
@@ -270,6 +271,7 @@ class BackupManager {
                 )
             }
             Log.d("BackupManager", "trackingHistory Firestore → Room 복원 성공")
+
             true
         } catch (e: Exception) {
             Log.e("BackupManager", "trackingHistory Firestore 복원 실패", e)

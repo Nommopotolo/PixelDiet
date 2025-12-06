@@ -10,12 +10,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.example.pixeldiet.MainActivity
 import com.example.pixeldiet.R
-import com.example.pixeldiet.repository.UsageRepository
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
+import android.util.Log
 
 class LoginActivity : AppCompatActivity() {
 
@@ -32,43 +32,34 @@ class LoginActivity : AppCompatActivity() {
                 if (idToken != null) {
                     lifecycleScope.launch {
                         try {
-                            // 1. Firebase 인증
+                            // Firebase 인증 진행
                             backupManager.signInWithGoogle(idToken)
 
-                            // 2. UID 저장
+                            // ✅ Firebase UID 가져오기
                             val firebaseUid = FirebaseAuth.getInstance().currentUser?.uid
                             if (firebaseUid != null) {
                                 getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                                     .edit()
-                                    .putString("uid", firebaseUid)
+                                    .putString("uid", firebaseUid) // ✅ Firebase UID 저장
                                     .apply()
                             }
 
-                            // 3. Firestore → Room 복원
-                            // Firestore → Room 복원
-                            val dailyOk = backupManager.restoreDailyRecordsToRoom(this@LoginActivity)
-                            val goalOk = backupManager.restoreGoalHistoryToRoom(this@LoginActivity)
-                            val trackingOk = backupManager.restoreTrackingHistoryToRoom(this@LoginActivity)
+                            // 🔹 Firestore → Room 복원 추가
+                            val ctx = applicationContext
+                            val dailyRestored = backupManager.restoreDailyRecordsToRoom(ctx)
+                            val goalRestored = backupManager.restoreGoalHistoryToRoom(ctx)
+                            val trackingRestored = backupManager.restoreTrackingHistoryToRoom(ctx)
 
-// Room → LiveData 즉시 반영 (DailyUsage)
-                            UsageRepository.loadOnceAfterRestore(this@LoginActivity)
+                            Log.d("LoginActivity", "복원 결과: daily=$dailyRestored, goal=$goalRestored, tracking=$trackingRestored")
+// 🔹 Firestore 복원 후 즉시 Repository와 ViewModel 갱신
+                            com.example.pixeldiet.repository.UsageRepository.loadRealData(ctx)
 
-// ✅ Goal/Tracking도 즉시 반영
+// SharedViewModel도 강제로 refreshData 호출
                             val vm = androidx.lifecycle.ViewModelProvider(this@LoginActivity)
                                 .get(com.example.pixeldiet.viewmodel.SharedViewModel::class.java)
                             vm.refreshData()
 
-                            android.util.Log.d(
-                                "LoginActivity",
-                                "복원 결과: daily=$dailyOk, goal=$goalOk, tracking=$trackingOk"
-                            )
-
-                            // 5. 사용자 알림 및 화면 이동
-                            Toast.makeText(
-                                this@LoginActivity,
-                                "구글 로그인 및 데이터 복원 완료",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            Toast.makeText(this@LoginActivity, "구글 로그인 완료", Toast.LENGTH_SHORT).show()
                             goToMain()
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -88,6 +79,7 @@ class LoginActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d("LoginActivity", "앱 시작됨 (LoginActivity onCreate)")   // 🔹 앱 시작 로그
         setContentView(R.layout.activity_login)
 
         backupManager = BackupManager()
@@ -109,6 +101,7 @@ class LoginActivity : AppCompatActivity() {
                     backupManager.initUser() // 익명 로그인 생성
                     val firebaseUid = FirebaseAuth.getInstance().currentUser?.uid ?: "anonymous"
 
+                    // ✅ UID SharedPreferences에 저장 (익명 UID 사용)
                     getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
                         .edit()
                         .putString("uid", firebaseUid)
@@ -130,6 +123,11 @@ class LoginActivity : AppCompatActivity() {
                 googleSignInLauncher.launch(signInIntent)
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d("LoginActivity", "앱 종료됨 (LoginActivity onDestroy)")   // 🔹 앱 종료 로그
     }
 
     private fun goToMain() {

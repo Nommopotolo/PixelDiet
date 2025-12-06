@@ -8,7 +8,6 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 import android.util.Log
 import com.example.pixeldiet.MainActivity
-import com.example.pixeldiet.repository.UsageRepository
 
 class LauncherActivity : AppCompatActivity() {
 
@@ -49,11 +48,7 @@ class LauncherActivity : AppCompatActivity() {
 
                     if (restoredDaily || restoredGoal || restoredTracking) {
                         Log.d("LauncherActivity", "Firestore 데이터 복원 성공")
-
-                        // ✅ 복원 직후 Room → LiveData 즉시 반영
-                        UsageRepository.loadOnceAfterRestore(applicationContext)
-
-                        // ✅ SharedViewModel 갱신
+                        // ✅ Activity 컨텍스트를 넘겨야 함
                         val vm = androidx.lifecycle.ViewModelProvider(this@LauncherActivity)
                             .get(com.example.pixeldiet.viewmodel.SharedViewModel::class.java)
                         vm.refreshData()

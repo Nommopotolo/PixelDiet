@@ -227,14 +227,17 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     init {
-        auth.addAuthStateListener { firebaseAuth ->
-            val uid = firebaseAuth.currentUser?.uid ?: "anonymous"
+        Log.d("SharedViewModel", "앱 시작됨 (SharedViewModel init)")   // 시작 로그
+        auth.addAuthStateListener(authListener)  // 람다 대신 authListener 등록
+        val uid = auth.currentUser?.uid ?: "anonymous"
 
+        // ✅ UI 상태도 갱신
             _userName.value = getUserName()
             isGoogleUser.value = isGoogleLogin()
 
             viewModelScope.launch(Dispatchers.IO) {
                 val dao = AppDatabase.getInstance(getApplication()).historyDao()
+
                 val tracked = if (uid != "anonymous") {
                     dao.getLatestTrackingHistory(uid)?.trackedPackages?.toSet() ?: emptySet()
                 } else {
@@ -242,18 +245,19 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _trackedPackages.postValue(tracked)
 
+                // ✅ 목표 시간도 DB 기반으로 불러오기
                 loadOverallGoal()
 
-                // ✅ AuthListener는 상태만 갱신, 데이터 로드는 하지 않음
-                Log.d("SharedViewModel", "AuthListener 상태 갱신 완료 (uid=$uid)")
+                if (uid != "anonymous") {
+                    repository.loadRealData(getApplication())
+                }
             }
         }
-    }
-
 
     override fun onCleared() {
         super.onCleared()
-        auth.removeAuthStateListener(authListener)
+        Log.d("SharedViewModel", "앱 종료됨 (SharedViewModel onCleared)")   // 종료 로그
+        auth.removeAuthStateListener(authListener) // 동일 객체 제거
     }
 
     fun onGoogleLoginSuccess(idToken: String) {
@@ -265,30 +269,22 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                 val uid = auth.currentUser?.uid ?: return@launch
                 Log.d("SharedViewModel", "구글 로그인 성공: $uid")
 
+                // ✅ Firestore → Room 복원
                 val context = getApplication<Application>().applicationContext
                 val backupManager = BackupManager()
 
-                // 🔹 복원 시작 알림
-                repository.setRestoring(true)
-
-                // Firestore → Room 복원 (순차 실행 보장)
                 val dailyRestored = backupManager.restoreDailyRecordsToRoom(context)
                 val goalRestored = backupManager.restoreGoalHistoryToRoom(context)
                 val trackingRestored = backupManager.restoreTrackingHistoryToRoom(context)
 
                 Log.d("SharedViewModel", "복원 결과: daily=$dailyRestored, goal=$goalRestored, tracking=$trackingRestored")
+// 🔹 복원된 추적앱을 다시 반영
+                loadTrackedPackages()
 
-                // 🔹 복원 완료 알림
-                repository.setRestoring(false)
-
-                // 🔹 복원 suspend 함수들이 모두 끝난 뒤에만 UID별 단 한 번 로드 실행
-                withContext(Dispatchers.IO) {
-                    repository.loadOnceAfterRestore(getApplication())
-                    Log.d("SharedViewModel", "복원 후 단일 로드 실행 완료 (uid=$uid)")
-                }
+                // ✅ 복원 후 UI 데이터 다시 로드
+                repository.loadRealData(getApplication())
 
             } catch (e: Exception) {
-                repository.setRestoring(false)
                 Log.e("GoogleLogin", "Firebase sign in failed: $e")
             }
         }
